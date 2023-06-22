@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -290,14 +291,42 @@ func createPolicyFS(policyPaths []string) (fs.FS, []string, error) {
 	}
 
 	mfs := mapfs.New()
+
 	for _, p := range policyPaths {
-		abs, err := filepath.Abs(p)
+		fileInfo, err := os.Stat(p)
 		if err != nil {
-			return nil, nil, xerrors.Errorf("failed to derive absolute path from '%s': %w", p, err)
+			return nil, nil, xerrors.Errorf("failed to access '%s': %w", p, err)
 		}
-		if err = mfs.CopyFilesUnder(abs); err != nil {
-			return nil, nil, xerrors.Errorf("mapfs file copy error: %w", err)
+
+		if fileInfo.IsDir() {
+			// The path is a directory
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				return nil, nil, xerrors.Errorf("failed to derive absolute path from '%s': %w", p, err)
+			}
+			if err = mfs.CopyFilesUnder(abs); err != nil {
+				return nil, nil, xerrors.Errorf("mapfs file copy error: %w", err)
+			}
+		} else {
+			abs, err := filepath.Abs(filepath.Dir(p))
+			if err != nil {
+				return nil, nil, xerrors.Errorf("failed to derive absolute path from '%s': %w", p, err)
+			}
+			filename := filepath.Base(p)
+
+			srcFile, err := os.Open(p)
+			if err != nil {
+				return nil, nil, xerrors.Errorf("failed to open source file '%s': %w", p, err)
+			}
+			defer srcFile.Close()
+
+			dstPath := filepath.Join(abs, filename)
+			err = mfs.WriteFile(dstPath, p)
+			if err != nil {
+				return nil, nil, xerrors.Errorf("failed to copy file '%s': %w", p, err)
+			}
 		}
+	
 	}
 
 	// policy paths are no longer needed as fs.FS contains only needed files now.
